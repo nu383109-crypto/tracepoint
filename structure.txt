@@ -1,0 +1,26 @@
+src/
+├── app.js
+├── controllers
+│   ├── auditController.js
+│   ├── componentsController.js
+│   ├── dashboardController.js
+│   ├── eventsController.js
+│   ├── kiosksController.js
+│   └── usersController.js
+├── db
+│   ├── pool.js
+│   ├── schema.sql
+│   └── seed.sql
+├── middleware
+│   └── auth.js
+├── routes
+│   ├── auditLogs.js
+│   ├── components.js
+│   ├── dashboard.js
+│   ├── kiosks.js
+│   └── users.js
+└── utils
+    └── pagination.js
+
+6 directories, 17 files
+tree is not installed, but available in the following packages, pick one to run it, Ctrl+C to cancel.
