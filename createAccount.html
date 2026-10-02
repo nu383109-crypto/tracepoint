@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Sign up</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body class="login-page">
+
+<div class="login-container">
+  <div class="login-card">
+
+    <div class="login-brand">
+      <div class="brand-icon">&#9635;</div>
+      <div>
+        <h1>TracePoint</h1>
+        <p>Asset Traceability System</p>
+      </div>
+    </div>
+
+    <div class="login-heading">
+      <h2>Create your account</h2>
+      <p>The first account becomes the administrator.</p>
+    </div>
+
+    <form id="createAccountForm">
+
+      <div class="form-group">
+        <label for="name">Full name</label>
+        <input type="text" id="name" placeholder="e.g. Ama Boateng" autocomplete="name" required>
+      </div>
+
+      <div class="form-group">
+        <label for="email">Email address</label>
+        <input type="email" id="email" placeholder="you@company.com" autocomplete="email" required>
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <div class="password-wrap">
+          <input type="password" id="password" placeholder="At least 6 characters" autocomplete="new-password" required minlength="6">
+          <button type="button" class="password-toggle" onclick="togglePassword()">Show</button>
+        </div>
+        <span class="field-hint" id="passwordHint">Use at least 6 characters.</span>
+      </div>
+
+      <div class="info-box">
+        <strong>Access control</strong>
+        <p>The first account created becomes the IT/Systems Administrator. Later accounts default to Field Technician, and only an administrator can grant extra access afterwards.</p>
+      </div>
+
+      <div id="accountMessage" class="form-message" hidden></div>
+
+      <button type="submit" class="btn primary login-button">Create account</button>
+
+    </form>
+
+    <div class="login-foot">
+      Already have an account? <a href="login.html">Log in</a>
+    </div>
+
+  </div>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+function togglePassword() {
+    const field = document.getElementById("password");
+    const button = document.querySelector(".password-toggle");
+    const hidden = field.type === "password";
+    field.type = hidden ? "text" : "password";
+    button.textContent = hidden ? "Hide" : "Show";
+}
+
+/* Live feedback while typing, so nobody finds out the password
+   is too short only after pressing the button. */
+document.getElementById("password").addEventListener("input", function () {
+
+    const hint = document.getElementById("passwordHint");
+    const value = this.value;
+
+    if (!value) {
+        hint.textContent = "Use at least 6 characters.";
+        hint.className = "field-hint";
+        return;
+    }
+
+    if (value.length < 6) {
+        hint.textContent = `${6 - value.length} more character${value.length === 5 ? "" : "s"} needed.`;
+        hint.className = "field-hint warning";
+        return;
+    }
+
+    const strong = value.length >= 10 && /\d/.test(value) && /[a-zA-Z]/.test(value);
+    hint.textContent = strong ? "Strong password." : "Good. Mixing letters and numbers makes it stronger.";
+    hint.className = "field-hint " + (strong ? "good" : "");
+});
+
+document.getElementById("createAccountForm").addEventListener("submit", async function (event) {
+
+    event.preventDefault();
+
+    const name = document.getElementById("name").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const message = document.getElementById("accountMessage");
+
+    if (!name || !email) {
+        message.textContent = "Fill in your name and email address.";
+        message.hidden = false;
+        return;
+    }
+
+    const result = await registerUser(name, email, password);
+
+    if (!result.success) {
+        message.textContent = result.message;
+        message.hidden = false;
+        return;
+    }
+
+    message.hidden = true;
+
+    showSuccess(
+        "Account created",
+        `Welcome, ${escapeHtml(name.split(" ")[0])}. Sign in with your account.`,
+        () => { window.location.href = "login.html"; }
+    );
+});
+
+</script>
+
+</body>
+</html>
