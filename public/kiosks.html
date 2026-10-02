@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Kiosks</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar">
+  <div class="brand">
+    <a class="brand-icon" href="dashboard.html" title="Go to dashboard">▣</a>
+    <div><strong>TracePoint</strong><small>Asset Traceability</small></div>
+  </div>
+  <nav>
+    <a href="dashboard.html" data-page="dashboard">Dashboard</a>
+    <a class="active" href="kiosks.html" data-page="kiosks">Kiosks</a>
+    <a href="components.html" data-page="components">Components</a>
+    <a href="moveComponent.html" data-page="moveComponent">Log an Event</a>
+    <a href="faults.html" data-page="faults">Fault History</a>
+    <a href="alerts.html" data-page="alerts">Alerts</a>
+    <a href="reports.html" data-page="reports">Reports</a>
+    <div class="nav-divider"></div>
+    <a href="users.html" data-page="users">Users</a>
+    <a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a>
+    <a href="auditLog.html" data-page="auditLog">Audit Log</a>
+  </nav>
+</aside>
+
+<main class="main">
+
+<header class="topbar">
+  <h2>Kiosks</h2>
+  <div class="user-area">
+    <div class="user-info">
+      <strong id="currentUserName">User</strong>
+      <small id="currentUserRole">Role</small>
+    </div>
+    <button class="logout" onclick="logoutUser()">Sign out</button>
+  </div>
+</header>
+
+<section class="content">
+
+  <div class="page-title">
+    <div>
+      <h1>Kiosks</h1>
+      <p>View kiosk configuration and installed components.</p>
+    </div>
+    <button class="btn primary" onclick="openAddKioskModal()">+ Add kiosk</button>
+  </div>
+
+  <div class="search">
+    <input type="text" id="kioskSearch" placeholder="Search kiosk ID or location...">
+    <button class="btn" id="kioskSearchBtn">Search</button>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Kiosk</th><th>Location</th><th>Components</th><th>Status</th><th>Installed</th><th>Action</th></tr>
+        </thead>
+        <tbody id="kiosksBody">
+          <!-- rows are rendered by loadKiosks() -->
+        </tbody>
+      </table>
+      <p id="kiosksLoading" class="muted" style="padding:16px 20px;">Loading kiosks...</p>
+      <p id="noKioskResults" class="muted" style="padding:16px 20px;" hidden>No kiosks match that search.</p>
+    </div>
+    <div class="pagination" id="kiosksPagination" hidden>
+      <button class="btn small" id="kiosksPrevBtn">&larr; Prev</button>
+      <span id="kiosksPageInfo" class="muted"></span>
+      <button class="btn small" id="kiosksNextBtn">Next &rarr;</button>
+    </div>
+  </div>
+
+</section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("kiosks");
+
+/* =========================================================
+   STATE
+========================================================= */
+
+const PAGE_SIZE = 20;
+let currentPage = 1;
+let currentSearch = "";
+
+/* =========================================================
+   LOAD + RENDER
+========================================================= */
+
+async function loadKiosks() {
+
+    const tbody = document.getElementById("kiosksBody");
+    const loadingEl = document.getElementById("kiosksLoading");
+    const noResultsEl = document.getElementById("noKioskResults");
+    const paginationEl = document.getElementById("kiosksPagination");
+
+    loadingEl.hidden = false;
+    noResultsEl.hidden = true;
+    tbody.innerHTML = "";
+
+    try {
+
+        const params = new URLSearchParams({ page: currentPage, limit: PAGE_SIZE });
+        if (currentSearch) params.set("search", currentSearch);
+
+        const result = await apiFetch(`/kiosks?${params}`);
+
+        loadingEl.hidden = true;
+
+        if (result.data.length === 0) {
+            noResultsEl.hidden = false;
+            paginationEl.hidden = true;
+            return;
+        }
+
+        result.data.forEach(renderKioskRow);
+
+        paginationEl.hidden = false;
+        document.getElementById("kiosksPageInfo").textContent =
+            `Page ${result.page} of ${result.totalPages} (${result.total} total)`;
+        document.getElementById("kiosksPrevBtn").disabled = result.page <= 1;
+        document.getElementById("kiosksNextBtn").disabled = result.page >= result.totalPages;
+
+    } catch (err) {
+        loadingEl.hidden = true;
+        showToast(err.message, "error");
+    }
+}
+
+function renderKioskRow(kiosk) {
+
+    const tbody = document.getElementById("kiosksBody");
+    const row = document.createElement("tr");
+
+    const statusClass = kiosk.status === "Active" ? "status-active" : "status";
+    const installedLabel = new Date(kiosk.installed_at).toLocaleDateString("en-GB", {
+        day: "2-digit", month: "short", year: "numeric"
+    });
+
+    row.innerHTML = `
+        <td><strong></strong></td>
+        <td></td>
+        <td></td>
+        <td><span class="${statusClass}"></span></td>
+        <td></td>
+        <td><button class="btn small">View</button></td>
+    `;
+
+    row.children[0].querySelector("strong").textContent = kiosk.kiosk_code;
+    row.children[1].textContent = kiosk.location;
+    row.children[2].textContent = kiosk.component_count;
+    row.children[3].querySelector("span").textContent = kiosk.status;
+    row.children[4].textContent = installedLabel;
+    row.querySelector("button").addEventListener("click", () => {
+        window.location.href = `kioskDetail.html?id=${kiosk.id}`;
+    });
+
+    tbody.appendChild(row);
+}
+
+/* =========================================================
+   SEARCH — debounced, re-queries the backend instead of
+   hiding DOM rows, so it searches the whole fleet, not just
+   the current page.
+========================================================= */
+
+let searchDebounceTimer = null;
+
+function onKioskSearchInput() {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+        currentSearch = document.getElementById("kioskSearch").value.trim();
+        currentPage = 1;
+        loadKiosks();
+    }, 300);
+}
+
+document.getElementById("kioskSearch").addEventListener("input", onKioskSearchInput);
+document.getElementById("kioskSearchBtn").addEventListener("click", () => {
+    clearTimeout(searchDebounceTimer);
+    currentSearch = document.getElementById("kioskSearch").value.trim();
+    currentPage = 1;
+    loadKiosks();
+});
+
+/* =========================================================
+   PAGINATION CONTROLS
+========================================================= */
+
+document.getElementById("kiosksPrevBtn").addEventListener("click", () => {
+    if (currentPage > 1) {
+        currentPage--;
+        loadKiosks();
+    }
+});
+
+document.getElementById("kiosksNextBtn").addEventListener("click", () => {
+    currentPage++;
+    loadKiosks();
+});
+
+loadKiosks();
+
+/* =========================================================
+   ADD KIOSK — modal form, then a brief processing state,
+   then a success message, then the new row lands in the table.
+========================================================= */
+
+function openAddKioskModal() {
+
+    openModal(`
+        <h3>Add a kiosk</h3>
+        <form id="addKioskForm">
+            <div class="form-group">
+                <label for="newKioskId">Kiosk ID</label>
+                <input type="text" id="newKioskId" placeholder="e.g. KSK-030" required>
+            </div>
+            <div class="form-group">
+                <label for="newKioskLocation">Location</label>
+                <input type="text" id="newKioskLocation" placeholder="e.g. Tema Station" required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Add kiosk</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("addKioskForm").addEventListener("submit", handleAddKiosk);
+}
+
+async function handleAddKiosk(event) {
+
+    event.preventDefault();
+
+    const kiosk_code = document.getElementById("newKioskId").value.trim();
+    const location = document.getElementById("newKioskLocation").value.trim();
+
+    if (!kiosk_code || !location) {
+        showToast("Please fill in both fields.", "error");
+        return;
+    }
+
+    openModal(`
+        <div style="text-align:center;">
+            <div class="spinner"></div>
+            <p>Provisioning ${kiosk_code}...</p>
+        </div>
+    `);
+
+    // Duplicate kiosk codes are rejected by the backend's UNIQUE
+    // constraint (409), same pattern as component registration.
+    try {
+
+        const kiosk = await apiFetch("/kiosks", {
+            method: "POST",
+            body: JSON.stringify({ kiosk_code, location })
+        });
+
+        openModal(`
+            <div style="text-align:center;">
+                <div class="success-check">&#10003;</div>
+                <h3>Kiosk added</h3>
+                <p>${kiosk.kiosk_code} at ${kiosk.location} is now being tracked.</p>
+                <button class="btn primary" onclick="closeModal()">Done</button>
+            </div>
+        `);
+
+        showToast(`${kiosk.kiosk_code} added successfully.`, "success");
+        currentPage = 1;
+        loadKiosks();
+
+    } catch (err) {
+        closeModal();
+        showToast(err.message, "error");
+    }
+}
+
+</script>
+
+</body>
+</html>

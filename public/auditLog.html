@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Audit Log</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a href="kiosks.html" data-page="kiosks">Kiosks</a><a href="components.html" data-page="components">Components</a><a href="moveComponent.html" data-page="moveComponent">Log an Event</a><a href="faults.html" data-page="faults">Fault History</a><a href="alerts.html" data-page="alerts">Alerts</a><a href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a class="active" href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+  <header class="topbar"><h2>Audit Log</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content">
+
+    <div class="page-title">
+      <div>
+        <h1>System audit log</h1>
+        <p>Every action that changes data or access, with who did it and when.</p>
+      </div>
+      <div class="title-actions">
+        <button class="btn" onclick="exportLogs()">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" id="logSearch" class="search-input" placeholder="Search by user, action or description...">
+      <select id="actionFilter" style="width:auto; min-width:180px;"></select>
+      <select id="periodFilter" style="width:auto; min-width:150px;">
+        <option value="all">All time</option>
+        <option value="today">Today</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <span class="result-count" id="logCount"></span>
+    </div>
+
+    <div class="card flush">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Date &amp; time</th><th>User</th><th>Role</th><th>Action</th><th>Description</th></tr>
+          </thead>
+          <tbody id="auditTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pagination" id="auditPagination" hidden>
+      <button class="btn small" id="auditPrev" type="button">Previous</button>
+      <span id="auditPageInfo"></span>
+      <button class="btn small" id="auditNext" type="button">Next</button>
+    </div>
+
+  </section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("auditLog", "Audit log");
+
+let logs = [];
+let currentPage = 1;
+let totalPages = 1;
+let totalLogs = 0;
+
+/* The action dropdown is built from what's actually been logged,
+   so it never offers a filter that returns nothing. */
+function populateActionFilter() {
+
+  const actions = [...new Set(logs.map(log => log.action))].sort();
+
+    document.getElementById("actionFilter").innerHTML =
+        `<option value="all">All actions</option>` +
+        actions.map(action => `<option value="${escapeHtml(action)}">${escapeHtml(action)}</option>`).join("");
+}
+
+function visibleLogs() {
+
+    const query = document.getElementById("logSearch").value.trim().toLowerCase();
+    const action = document.getElementById("actionFilter").value;
+    const period = document.getElementById("periodFilter").value;
+
+    return logs.filter(log => {
+
+        const haystack = `${log.performedBy} ${log.userRole} ${log.action} ${log.description}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+        if (action !== "all" && log.action !== action) return false;
+
+        if (period === "today") {
+            return new Date(log.timestamp).toDateString() === new Date().toDateString();
+        }
+
+        if (period !== "all") {
+            return new Date(log.timestamp).getTime() > Date.now() - parseInt(period, 10) * 86400000;
+        }
+
+        return true;
+    });
+}
+
+function renderAuditLogs() {
+
+    const logs = visibleLogs();
+    const table = document.getElementById("auditTable");
+
+  document.getElementById("logCount").textContent = `${logs.length} shown of ${totalLogs} entries`;
+
+    if (!logs.length) {
+        table.innerHTML = emptyRow(5, "No audit entries match this view.");
+        return;
+    }
+
+    table.innerHTML = logs.map(log => `
+        <tr>
+            <td>${escapeHtml(formatDateTime(log.timestamp))}<span class="cell-sub">${escapeHtml(timeAgo(log.timestamp))}</span></td>
+            <td>${escapeHtml(log.performedBy)}</td>
+            <td><span class="pill pill-role">${escapeHtml(log.userRole)}</span></td>
+            <td><strong>${escapeHtml(log.action)}</strong></td>
+            <td>${escapeHtml(log.description)}</td>
+        </tr>`).join("");
+}
+
+async function loadAuditLogs() {
+  const table = document.getElementById("auditTable");
+  table.innerHTML = emptyRow(5, "Loading audit entries...");
+  try {
+    const result = await getAuditLogs({ page: currentPage, limit: 100 });
+    logs = (result.data || []).map(log => ({
+      ...log,
+      performedBy: log.performed_by_name,
+      userRole: log.role,
+      timestamp: log.created_at
+    }));
+    totalLogs = result.total || 0;
+    totalPages = result.totalPages || 1;
+    populateActionFilter();
+    renderAuditLogs();
+    const pagination = document.getElementById("auditPagination");
+    pagination.hidden = totalPages <= 1;
+    document.getElementById("auditPageInfo").textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById("auditPrev").disabled = currentPage <= 1;
+    document.getElementById("auditNext").disabled = currentPage >= totalPages;
+  } catch (err) {
+    table.innerHTML = emptyRow(5, err.message);
+    showToast(err.message, "error");
+  }
+}
+
+async function exportLogs() {
+
+  try {
+    const allLogs = (await getAllPages("/audit-logs")).map(log => ({
+      ...log,
+      performedBy: log.performed_by_name,
+      userRole: log.role,
+      timestamp: log.created_at
+    }));
+    const rows = allLogs.filter(matchesCurrentFilters).map(log => [
+      formatDateTime(log.timestamp), log.performedBy, log.userRole, log.action, log.description
+    ]);
+
+    downloadCsv("tracepoint-audit-log.csv",
+      ["Date & time", "User", "Role", "Action", "Description"], rows);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+function matchesCurrentFilters(log) {
+  const query = document.getElementById("logSearch").value.trim().toLowerCase();
+  const action = document.getElementById("actionFilter").value;
+  const period = document.getElementById("periodFilter").value;
+  const haystack = `${log.performedBy} ${log.userRole} ${log.action} ${log.description}`.toLowerCase();
+  if (!haystack.includes(query) || (action !== "all" && log.action !== action)) return false;
+  if (period === "today") return new Date(log.timestamp).toDateString() === new Date().toDateString();
+  if (period !== "all") return new Date(log.timestamp).getTime() > Date.now() - parseInt(period, 10) * 86400000;
+  return true;
+}
+
+document.getElementById("logSearch").addEventListener("input", renderAuditLogs);
+document.getElementById("actionFilter").addEventListener("change", renderAuditLogs);
+document.getElementById("periodFilter").addEventListener("change", renderAuditLogs);
+document.getElementById("auditPrev").addEventListener("click", () => { currentPage -= 1; loadAuditLogs(); });
+document.getElementById("auditNext").addEventListener("click", () => { currentPage += 1; loadAuditLogs(); });
+
+loadAuditLogs();
+
+</script>
+
+</body>
+</html>

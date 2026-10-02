@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Alerts</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a href="kiosks.html" data-page="kiosks">Kiosks</a><a href="components.html" data-page="components">Components</a><a href="moveComponent.html" data-page="moveComponent">Log an Event</a><a href="faults.html" data-page="faults">Fault History</a><a class="active" href="alerts.html" data-page="alerts">Alerts</a><a href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+    <header class="topbar"><h2>Alerts</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content">
+
+    <div class="page-title">
+      <div>
+        <h1>Alerts</h1>
+        <p>Worked out from the register every time this page loads. An alert disappears on its own once the underlying problem is fixed.</p>
+      </div>
+      <div class="title-actions">
+        <button class="btn" onclick="restoreAll()">Restore acknowledged</button>
+        <button class="btn primary" onclick="window.location.reload()">Re-check now</button>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="chips" id="alertFilters">
+        <button class="chip active" data-filter="open">Needs attention</button>
+        <button class="chip" data-filter="acknowledged">Acknowledged</button>
+        <button class="chip" data-filter="all">All</button>
+      </div>
+      <span class="result-count" id="alertCount"></span>
+    </div>
+
+    <div id="alertList"></div>
+
+  </section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("alerts", "Alerts");
+
+let activeFilter = "open";
+
+function renderAlerts() {
+
+    const all = computeAlerts();
+
+    const alerts = all.filter(alert => {
+        if (activeFilter === "open") return !alert.acknowledged;
+        if (activeFilter === "acknowledged") return alert.acknowledged;
+        return true;
+    });
+
+    const list = document.getElementById("alertList");
+
+    document.getElementById("alertCount").textContent =
+        `${all.filter(alert => !alert.acknowledged).length} need attention`;
+
+    if (!alerts.length) {
+        list.innerHTML = `
+            <div class="card">
+                <div class="empty-state">
+                    <p>${activeFilter === "acknowledged"
+                        ? "Nothing has been acknowledged yet."
+                        : "Nothing needs attention. Every component is accounted for, warranties are in date and no high-severity fault is open."}</p>
+                </div>
+            </div>`;
+        return;
+    }
+
+    list.innerHTML = alerts.map(alert => `
+        <div class="alert-card ${alert.level} ${alert.acknowledged ? "acknowledged" : ""}">
+            <div class="alert-icon">!</div>
+            <div>
+                <strong>${escapeHtml(alert.title)}</strong>
+                <p>${escapeHtml(alert.detail)}</p>
+                <div class="btn-row">
+                    <a class="btn small" href="${alert.actionHref}">${escapeHtml(alert.actionLabel)}</a>
+                    ${alert.acknowledged
+                        ? `<span class="pill pill-mute">Acknowledged</span>`
+                        : `<button class="btn small ghost" onclick="acknowledge('${alert.id}')">Acknowledge</button>`}
+                </div>
+            </div>
+        </div>`).join("");
+}
+
+function acknowledge(alertId) {
+    acknowledgeAlert(alertId);
+    showToast("Alert acknowledged. It stays hidden until you restore it.", "success");
+    renderAlerts();
+}
+
+function restoreAll() {
+    openConfirm({
+        title: "Restore acknowledged alerts?",
+        body: "Everything you've acknowledged comes back into the list, as long as the problem still exists.",
+        confirmLabel: "Restore",
+        onConfirm: () => {
+            restoreAlerts();
+            showToast("Acknowledged alerts restored.", "success");
+            renderAlerts();
+        }
+    });
+}
+
+document.querySelectorAll("#alertFilters .chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+        activeFilter = chip.dataset.filter;
+        document.querySelectorAll("#alertFilters .chip").forEach(other =>
+            other.classList.toggle("active", other === chip));
+        renderAlerts();
+    });
+});
+
+renderAlerts();
+
+</script>
+
+</body>
+</html>

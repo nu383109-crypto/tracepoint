@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Log an Event</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a href="kiosks.html" data-page="kiosks">Kiosks</a><a href="components.html" data-page="components">Components</a><a class="active" href="moveComponent.html" data-page="moveComponent">Log an Event</a><a href="faults.html" data-page="faults">Fault History</a><a href="alerts.html" data-page="alerts">Alerts</a><a href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+  <header class="topbar"><h2>Log an Event</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content">
+
+    <div class="page-title">
+      <div>
+        <h1>Log a component event</h1>
+        <p>Not just swaps — record a move, an install, a removal, a decommission, maintenance, or a fault, all in one place.</p>
+      </div>
+    </div>
+
+    <div class="workflow" id="workflow">
+      <div class="step" data-step="1">1. Event</div>
+      <div class="step" data-step="2">2. Component</div>
+      <div class="step" data-step="3">3. Details</div>
+      <div class="step" data-step="4">4. Confirm</div>
+    </div>
+
+    <div class="card form-card">
+
+      <div class="scan-block">
+        <div class="scan-icon">&#9635;</div>
+        <p>Scan the component's QR code or barcode to fill in its ID automatically, or type it in below.</p>
+        <button type="button" class="btn primary" id="scanToggleBtn" onclick="toggleScanner()">Scan QR / barcode</button>
+        <div id="reader"></div>
+        <div id="scanStatus" class="scan-status" hidden></div>
+      </div>
+
+      <form id="eventForm">
+
+        <div class="form-grid">
+
+          <div class="form-group">
+            <label for="eventType">Event type</label>
+            <select id="eventType" required>
+              <option value="">Select event type</option>
+              <option value="Moved">Component moved</option>
+              <option value="Installed">Component installed</option>
+              <option value="Removed to Storage">Component removed to storage</option>
+              <option value="Decommissioned">Component decommissioned</option>
+              <option value="Maintenance Performed">Maintenance performed</option>
+              <option value="Fault Reported">Fault reported</option>
+              <option value="Marked Missing">Marked missing</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="componentId">Component ID</label>
+            <input type="text" id="componentId" list="componentList" placeholder="e.g. TP-00001" autocomplete="off" required>
+            <datalist id="componentList"></datalist>
+            <span class="field-hint" id="componentHint">Start typing to see registered components.</span>
+          </div>
+
+          <div class="form-group" id="destinationGroup">
+            <label for="destination">Kiosk</label>
+            <select id="destination">
+              <option value="">Select kiosk</option>
+            </select>
+            <span class="field-hint" id="destinationHint">Required for moves and installs.</span>
+          </div>
+
+          <div class="form-group" id="severityGroup" hidden>
+            <label>Fault severity</label>
+            <div class="radio-set">
+              <label class="radio-option"><input type="radio" name="severity" value="Low"><span>Low<small>Cosmetic or minor</small></span></label>
+              <label class="radio-option"><input type="radio" name="severity" value="Medium" checked><span>Medium<small>Degraded service</small></span></label>
+              <label class="radio-option"><input type="radio" name="severity" value="High"><span>High<small>Out of service</small></span></label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="reason">Reason / summary</label>
+            <input type="text" id="reason" placeholder="e.g. Fault replacement, routine service...">
+          </div>
+
+          <div class="form-group full">
+            <label for="notes">Notes</label>
+            <textarea id="notes" placeholder="Optional detail for whoever reviews this later"></textarea>
+          </div>
+
+        </div>
+
+        <div id="eventMessage" class="form-message" hidden></div>
+
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="resetForm()">Clear</button>
+          <button type="submit" class="btn primary">Log event</button>
+        </div>
+
+      </form>
+    </div>
+
+    <div class="card flush">
+      <div class="card-head"><h3>Recent events</h3><span class="muted" id="eventTotal"></span></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>When</th><th>Component</th><th>Event</th><th>From</th><th>To</th><th>Logged by</th></tr>
+          </thead>
+          <tbody id="eventsTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+  initializePage("moveComponent", "Log an event");
+  
+  const eventTypeSelect = document.getElementById("eventType");
+  const componentInput = document.getElementById("componentId");
+  const destinationGroup = document.getElementById("destinationGroup");
+  const destinationSelect = document.getElementById("destination");
+  const destinationHint = document.getElementById("destinationHint");
+  const severityGroup = document.getElementById("severityGroup");
+  
+  
+  /* =========================================================
+     POPULATE FROM LIVE DATA
+  ========================================================= */
+
+  
+  async function populateKiosks() {
+      try {
+          const kiosksData = await getKiosks();
+          const kiosksList = Array.isArray(kiosksData) ? kiosksData : (kiosksData.data || []);
+
+          cachedKiosksList = kiosksList;
+          const kiosks = kiosksList.filter(kiosk => kiosk.status !== "Decommissioned");
+          destinationSelect.innerHTML = `<option value="">Select kiosk</option>` + kiosks.map(kiosk =>
+              `<option value="${escapeHtml(kiosk.id)}">${escapeHtml(kiosk.id)} — ${escapeHtml(kiosk.location)}${kiosk.status === "Maintenance" ? " (maintenance)" : ""}</option>`
+          ).join("");
+      } catch (err) {
+          console.error("Failed to load kiosks:", err);
+      }
+
+      const kiosk = cachedKiosksList.find(item => item.id == location);
+      return kiosk ? `${kiosk.id} - ${kiosk.location}` : location;
+  }
+  
+  async function populateComponents() {
+      try {
+          const componentsData = await getComponents();
+          const components = Array.isArray(componentsData) ? componentsData : (componentsData.data || []);
+  
+          document.getElementById("componentList").innerHTML = components.map(item =>
+              `<option value="${escapeHtml(item.serial)}">${escapeHtml(item.type)} — ${escapeHtml(displayLocation(item.location))}</option>`
+          ).join("");
+      } catch (err) {
+          console.error("Failed to load components:", err);
+      }
+  }
+  
+  // Call both async functions
+  populateKiosks();
+  populateComponents();
+  
+  /* Deep links from a kiosk or component page arrive with the
+     subject already chosen. */
+  const presetComponent = getQueryParam("component");
+  const presetKiosk = getQueryParam("kiosk");
+  
+  if (presetComponent) componentInput.value = presetComponent;
+  if (presetKiosk) destinationSelect.value = presetKiosk;
+  
+  
+  /* =========================================================
+     LIVE COMPONENT LOOKUP
+  ========================================================= */
+  /* One lookup shared by updateComponentHint and updateSteps, so the
+   same serial is never fetched twice, and typing elsewhere in the
+   form (e.g. the reason field) costs no requests at all. */
+  let lastLookup = { serial: null, component: null };
+  let lookupSeq = 0;
+
+  async function resolveComponent(serial) {
+    if (!serial) return null;
+    if (lastLookup.serial === serial) return lastLookup.component;
+
+    let component = null;
+    try {
+      ({ component } = await getComponent(serial));
+    } catch {
+      component = null;
+    }
+    lastLookup = {serial, component };
+    return component;
+  }
+
+  function debounce(fn, delay) {
+    let timeoutId;
+    return function (...args) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => fn.apply(this, args), delay);
+    };
+  }
+  async function updateComponentHint() {
+      const seq = ++lookupSeq;
+      const hint = document.getElementById("componentHint");
+      const value = componentInput.value.trim();
+  
+      if (!value) {
+          hint.textContent = "Start typing to see registered components.";
+          hint.className = "field-hint";
+          await updateSteps();
+          return;
+      }
+
+      const component = await resolveComponent(value);
+      if (seq !== lookupSeq) return;
+
+      if (!component || !component.id) {
+        hint.textContent = "No component registered with that ID.";
+        hint.className = "field-hint danger";
+      } else {
+        hint.innerHTML = `${escapeHtml(component.type)} · currently at ${escapeHtml(displayLocation(component.location))} · ${escapeHtml(component.status)}`;
+        hint.className = "field-hint good";
+      }
+  
+      await updateSteps();
+  }
+  
+  componentInput.addEventListener("input", debounce(updateComponentHint, 300));
+  
+  
+  /* =========================================================
+     EVENT TYPE DRIVES THE REST OF THE FORM
+  ========================================================= */
+  
+  function updateFormForEventType() {
+      const type = eventTypeSelect.value;
+      
+      const needsDestination = type === "Moved" || type === "Installed";
+      const isRemoval = type === "Removed to Storage";
+  
+      destinationSelect.required = needsDestination;
+      
+      // Dropdown is usable if required/allowed OR when no event type is selected yet
+      destinationSelect.disabled = !needsDestination && type !== "";
+      destinationGroup.style.opacity = (needsDestination || type === "") ? "1" : "0.55";
+      severityGroup.hidden = type !== "Fault Reported";
+  
+      if (isRemoval) {
+          destinationHint.textContent = "Not needed — this event sends the component to storage automatically.";
+      } else if (needsDestination) {
+          destinationHint.textContent = "Required for moves and installs.";
+      } else if (type === "Decommissioned") {
+          destinationHint.textContent = "Not used — a decommissioned component is retired to storage.";
+      } else {
+          destinationHint.textContent = "Select event type or kiosk destination.";
+      }
+  
+      updateSteps();
+  }
+  
+  eventTypeSelect.addEventListener("change", updateFormForEventType);
+  destinationSelect.addEventListener("change", updateSteps);
+  document.getElementById("reason").addEventListener("input", updateSteps);
+  
+  
+  /* =========================================================
+     WORKFLOW INDICATOR
+  ========================================================= */
+  
+  async function updateSteps() {
+      const hasType = !!eventTypeSelect.value;
+      const compVal = componentInput.value.trim();
+      
+      let hasComponent = false;
+      if (compVal) {
+         const comp = await resolveComponent(compVal);
+         hasComponent = !!(comp && comp.id);
+      }
+  
+      const needsDestination = destinationSelect.required;
+      const hasDetails = !needsDestination || !!destinationSelect.value;
+  
+      const state = [hasType, hasComponent, hasDetails, hasType && hasComponent && hasDetails];
+  
+      document.querySelectorAll("#workflow .step").forEach((step, index) => {
+          step.classList.toggle("done", state[index]);
+          step.classList.toggle("active", !state[index] && (index === 0 || state[index - 1]));
+      });
+  }
+  
+  
+  /* =========================================================
+     QR / BARCODE SCANNER
+  ========================================================= */
+  
+  var scanner = null;
+  var scanning = false;
+  
+  function setScanStatus(text, kind) {
+      const el = document.getElementById("scanStatus");
+      el.textContent = text;
+      el.className = "scan-status" + (kind ? " " + kind : "");
+      el.hidden = false;
+  }
+  
+  function toggleScanner() {
+      if (scanning) stopScanner(); else startScanner();
+  }
+  
+  function startScanner() {
+      const readerEl = document.getElementById("reader");
+      const btn = document.getElementById("scanToggleBtn");
+  
+      if (typeof Html5Qrcode === "undefined") {
+          setScanStatus("The scanner library couldn't load. Enter the component ID manually below.", "err");
+          return;
+      }
+  
+      readerEl.style.display = "block";
+      readerEl.innerHTML = "";
+      setScanStatus("Starting camera...", "");
+  
+      const config = {
+          formatsToSupport: [
+              Html5QrcodeSupportedFormats.QR_CODE,
+              Html5QrcodeSupportedFormats.CODE_128,
+              Html5QrcodeSupportedFormats.CODE_39,
+              Html5QrcodeSupportedFormats.EAN_13,
+              Html5QrcodeSupportedFormats.EAN_8,
+              Html5QrcodeSupportedFormats.UPC_A,
+              Html5QrcodeSupportedFormats.UPC_E
+          ]
+      };
+  
+      scanner = new Html5Qrcode("reader", config);
+  
+      scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 240, height: 240 } },
+          decodedText => {
+              componentInput.value = decodedText;
+              updateComponentHint();
+              setScanStatus(`Scanned: ${decodedText}`, "ok");
+              showToast(`Scanned component ${decodedText}.`, "success");
+              stopScanner();
+          },
+          () => { /* frame miss */ }
+      ).then(() => {
+          scanning = true;
+          btn.textContent = "Stop scanning";
+          setScanStatus("Point the camera at the component's label.", "");
+      }).catch(() => {
+          readerEl.style.display = "none";
+          setScanStatus("Camera couldn't start. Enter the component ID manually below.", "err");
+          showToast("Camera couldn't start — enter the ID manually.", "error");
+      });
+  }
+  
+  function stopScanner() {
+      const btn = document.getElementById("scanToggleBtn");
+      const readerEl = document.getElementById("reader");
+  
+      if (!scanner) {
+          scanning = false;
+          return;
+      }
+  
+      scanner.stop()
+          .then(() => { scanner.clear(); scanner = null; })
+          .catch(() => { scanner = null; })
+          .finally(() => {
+              scanning = false;
+              btn.textContent = "Scan QR / barcode";
+              readerEl.style.display = "none";
+          });
+  }
+  
+  
+  /* =========================================================
+     SUBMIT
+  ========================================================= */
+  
+  document.getElementById("eventForm").addEventListener("submit", async function (event) {
+      event.preventDefault();
+  
+      const componentId = componentInput.value.trim();
+      const eventType = eventTypeSelect.value;
+      const destination = destinationSelect.value;
+      const reason = document.getElementById("reason").value.trim();
+      const notes = document.getElementById("notes").value.trim();
+      const severityInput = document.querySelector("input[name=severity]:checked");
+      const message = document.getElementById("eventMessage");
+  
+      try {
+          const result = await logComponentEvent(
+              componentId, eventType, destination, reason, notes,
+              severityInput ? severityInput.value : "Medium"
+          );
+
+          console.log(result);
+  
+          if (!result || !result.success) {
+              const errorMsg = result ? result.message : "Failed to log event.";
+              message.textContent = errorMsg;
+              message.hidden = false;
+              showToast(errorMsg, "error");
+              return;
+          }
+  
+          message.hidden = true;
+
+          message.className = "field-hint good";
+          message.textContent = `${eventType} recorded for ${result.component.id}. It's now at ${displayLocation(result.component.location)}.` 
+          message.hidden = false;
+
+          showToast(`${eventType} logged for ${result.component.id}.`, "success");
+          lastLookup = { serial: null, component: null };
+          resetForm();
+          await populateComponents();
+          await loadRecentEvents();
+      } catch (err) {
+          console.error("Error logging event:", err);
+          message.textContent = "An error occurred while submitting.";
+          message.hidden = false;
+      }
+  });
+  
+  function resetForm() {
+      document.getElementById("eventForm").reset();
+      document.getElementById("eventMessage").hidden = true;
+      updateFormForEventType();
+      updateComponentHint();
+  }
+  
+  
+  /* =========================================================
+     RECENT EVENTS
+  ========================================================= */
+  
+  async function loadRecentEvents() {
+      try {
+          const rawEvents = await getEvents();
+          const events = Array.isArray(rawEvents) ? rawEvents : (rawEvents.data || []);
+          const table = document.getElementById("eventsTable");
+  
+          document.getElementById("eventTotal").textContent = `${events.length} logged in total`;
+  
+          if (!events.length) {
+              table.innerHTML = emptyRow(6, "No events logged yet. The first one you record shows up here.");
+              return;
+          }
+  
+          table.innerHTML = events.slice(0, 10).map(evt => `
+              <tr>
+                  <td>${escapeHtml(timeAgo(evt.timestamp))}<span class="cell-sub">${escapeHtml(formatDateTime(evt.timestamp))}</span></td>
+                  <td><a class="id-link" href="componentDetail.html?id=${encodeURIComponent(evt.componentId)}">${escapeHtml(evt.componentId)}</a></td>
+                  <td>${escapeHtml(evt.eventType)}</td>
+                  <td>${escapeHtml(displayLocation(evt.from))}</td>
+                  <td>${escapeHtml(displayLocation(evt.to))}</td>
+                  <td>${escapeHtml(evt.performedBy)}</td>
+              </tr>`).join("");
+      } catch (err) {
+          console.error("Failed to load events:", err);
+      }
+  }
+  
+  updateFormForEventType();
+  updateComponentHint();
+  loadRecentEvents();
+  
+  </script>
+
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Component</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a href="kiosks.html" data-page="kiosks">Kiosks</a><a class="active" href="components.html" data-page="components">Components</a><a href="moveComponent.html" data-page="moveComponent">Log an Event</a><a href="faults.html" data-page="faults">Fault History</a><a href="alerts.html" data-page="alerts">Alerts</a><a href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+    <header class="topbar"><h2>Component</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content" id="detailContent"></section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("componentDetail", "Component");
+
+const componentId = getQueryParam("id");
+let component = null;
+let history = [];
+let faults = [];
+
+loadComponentDetail();
+
+async function loadComponentDetail() {
+
+    if (!componentId) {
+        renderNotFound();
+        return;
+    }
+
+    try {
+        const result = await getComponent(componentId);
+        component = result.component;
+        history = result.history;
+
+        faults = await faultsFor({ componentId: component.id });
+
+        renderComponent();
+
+    } catch (err) {
+        renderNotFound();
+    }
+}
+
+function renderNotFound() {
+
+    document.getElementById("detailContent").innerHTML = `
+        <div class="page-title"><div><h1>Component not found</h1>
+        <p>No component is registered with the ID ${escapeHtml(componentId || "(none given)")}.</p></div></div>
+        <a class="btn primary" href="components.html">Back to components</a>`;
+}
+
+function renderComponent() {
+
+    const openFaults = faults.filter(fault => fault.status === "Open");
+    const days = warrantyDaysLeft(component);
+    const displayId = `CMP-${String(component.id).padStart(4, "0")}`;
+    const locationText = component.kiosk_code
+        ? `${component.kiosk_code} — ${component.location}`
+        : "Storage";
+
+    document.getElementById("detailContent").innerHTML = `
+
+      <div class="breadcrumb"><a href="components.html">Components</a> / ${escapeHtml(displayId)}</div>
+
+      <div class="page-title">
+        <div>
+          <h1>${escapeHtml(displayId)} &middot; ${escapeHtml(component.type)}</h1>
+          <p>Currently at ${escapeHtml(locationText)}. Serial ${escapeHtml(component.serial)}.</p>
+        </div>
+        <div class="title-actions">
+          ${canManageAssets() ? `<button class="btn" onclick="openEditComponent()">Edit component</button>` : ""}
+          ${canAccess("faults") ? `<button class="btn" onclick="openComponentFault()">Report fault</button>` : ""}
+          ${canAccess("moveComponent") ? `<a class="btn primary" href="moveComponent.html?component=${encodeURIComponent(component.id)}">Log an event</a>` : ""}
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="card stat-card"><span>Current location</span><strong style="font-size:18px; margin-top:12px;">${escapeHtml(component.kiosk_code ? "Installed" : "Storage")}</strong><em>${escapeHtml(locationText)}</em></div>
+        <div class="card stat-card"><span>Events logged</span><strong>${history.length}</strong><em>full chain of custody</em></div>
+        <div class="card stat-card ${openFaults.length ? "attention" : ""}"><span>Open faults</span><strong>${openFaults.length}</strong><em>${faults.length} recorded all time</em></div>
+        <div class="card stat-card ${days !== null && days <= 30 ? "attention" : ""}"><span>Warranty</span><strong style="font-size:18px; margin-top:12px;">${days === null ? "Not set" : (days < 0 ? "Expired" : days + " days")}</strong><em>${component.warranty_expires_on ? "ends " + escapeHtml(formatDate(component.warranty_expires_on)) : "no cover recorded"}</em></div>
+      </div>
+
+      <div class="detail-grid">
+
+        <div>
+          <div class="card">
+            <div class="card-head"><h3>Chain of custody</h3><span class="muted">${history.length} events</span></div>
+            ${renderHistory(history)}
+          </div>
+        </div>
+
+        <div>
+
+          <div class="card">
+            <h3>Component details</h3>
+            <dl class="spec-list">
+              <div><dt>Component ID</dt><dd>${escapeHtml(displayId)}</dd></div>
+              <div><dt>Status</dt><dd>${statusPill(component.status)}</dd></div>
+              <div><dt>Type</dt><dd>${escapeHtml(component.type)}</dd></div>
+              <div><dt>Serial</dt><dd>${escapeHtml(component.serial)}</dd></div>
+              <div><dt>Location</dt><dd>${renderLocationValue()}</dd></div>
+              <div><dt>Warranty</dt><dd>${warrantyLabel(component)}</dd></div>
+              <div><dt>Registered</dt><dd>${escapeHtml(formatDate(component.created_at))}</dd></div>
+              <div><dt>Last event</dt><dd>${history.length ? escapeHtml(formatDate(history[0].created_at)) : "None"}</dd></div>
+            </dl>
+          </div>
+
+          <div class="card">
+            <h3>Faults on this component</h3>
+            ${renderFaults(faults)}
+          </div>
+
+        </div>
+
+      </div>`;
+}
+
+function renderLocationValue() {
+
+    if (component.kiosk_code) {
+        return `<a class="id-link" href="kioskDetail.html?id=${encodeURIComponent(component.kiosk_id)}">${escapeHtml(component.kiosk_code)} — ${escapeHtml(component.location)}</a>`;
+    }
+
+    return "Storage";
+}
+
+function renderHistory(history) {
+
+    if (!history.length) {
+        return `<div class="empty-state">
+            <p>No events logged for this component yet. Its history starts the first time it's moved, installed or serviced.</p>
+            ${canAccess("moveComponent") ? `<a class="btn primary small" href="moveComponent.html?component=${encodeURIComponent(component.id)}">Log the first event</a>` : ""}
+        </div>`;
+    }
+
+    return `<ul class="timeline">` + history.map(item => {
+
+        const moved = item.from_kiosk_id !== item.to_kiosk_id;
+        const fromLabel = item.from_kiosk_code || "Storage";
+        const toLabel = item.to_kiosk_code || "Storage";
+
+        return `<li>
+            <strong>${escapeHtml(item.event_type)}</strong>
+            <div class="timeline-meta">${escapeHtml(formatDateTime(item.created_at))} &middot; ${escapeHtml(item.performed_by_name)}</div>
+            ${moved ? `<p>${escapeHtml(fromLabel)} &rarr; ${escapeHtml(toLabel)}</p>` : ""}
+            ${item.reason ? `<p>${escapeHtml(item.reason)}</p>` : ""}
+            ${item.notes ? `<p class="muted">${escapeHtml(item.notes)}</p>` : ""}
+        </li>`;
+    }).join("") + `</ul>`;
+}
+
+function renderFaults(faults) {
+
+    if (!faults.length) {
+        return `<div class="empty-state"><p>No faults recorded against this component.</p></div>`;
+    }
+
+    return `<ul class="mini-list">` + faults.map(fault => `
+        <li>
+            <span>${severityPill(fault.severity)} ${escapeHtml(fault.description)}
+                <span class="cell-sub">${escapeHtml(formatDate(fault.created_at))} &middot; ${escapeHtml(fault.reported_by_name)}</span>
+            </span>
+            ${statusPill(fault.status)}
+        </li>`).join("") + `</ul>`;
+}
+
+
+/* =========================================================
+   EDIT
+========================================================= */
+
+function openEditComponent() {
+
+    const types = ["Motor", "Control Board", "Card Reader", "Wiring Harness", "Power Supply", "Other"];
+
+    openModal(`
+        <h3>Edit ${escapeHtml(`CMP-${String(component.id).padStart(4, "0")}`)}</h3>
+        <form id="editComponentForm">
+            <div class="form-group">
+                <label for="editType">Type</label>
+                <select id="editType">
+                    ${types.map(type => `<option ${type === component.type ? "selected" : ""}>${type}</option>`).join("")}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="editSerial">Serial number</label>
+                <input type="text" id="editSerial" value="${escapeHtml(component.serial)}">
+            </div>
+            <div class="form-group">
+                <label for="editWarrantyExpiry">Warranty expiry date</label>
+                <input type="date" id="editWarrantyExpiry" value="${component.warranty_expires_on ? component.warranty_expires_on.slice(0, 10) : ""}">
+            </div>
+            <p class="field-hint">To change status or location, use <strong>Log an event</strong> instead — that keeps the chain of custody accurate.</p>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Save changes</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("editComponentForm").addEventListener("submit", async event => {
+
+        event.preventDefault();
+
+        try {
+            await apiFetch(`/components/${component.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    type: document.getElementById("editType").value,
+                    serial: document.getElementById("editSerial").value,
+                    warranty_expires_on: document.getElementById("editWarrantyExpiry").value || null
+                })
+            });
+
+            closeModal();
+            showToast("Component updated.", "success");
+            setTimeout(() => window.location.reload(), 600);
+
+        } catch (err) {
+            showToast(err.message, "error");
+        }
+    });
+}
+
+
+/* =========================================================
+   REPORT A FAULT
+========================================================= */
+
+function openComponentFault() {
+
+    openModal(`
+        <h3>Report a fault on ${escapeHtml(`CMP-${String(component.id).padStart(4, "0")}`)}</h3>
+        <form id="componentFaultForm">
+            <div class="form-group">
+                <label>Severity</label>
+                <div class="radio-set">
+                    <label class="radio-option"><input type="radio" name="severity" value="Low"><span>Low<small>Cosmetic or minor</small></span></label>
+                    <label class="radio-option"><input type="radio" name="severity" value="Medium" checked><span>Medium<small>Degraded service</small></span></label>
+                    <label class="radio-option"><input type="radio" name="severity" value="High"><span>High<small>Out of service</small></span></label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="faultDescription">What's wrong?</label>
+                <textarea id="faultDescription" placeholder="Describe the fault as you found it" required></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Report fault</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("componentFaultForm").addEventListener("submit", async event => {
+
+        event.preventDefault();
+
+        const result = await logFault({
+            componentId: component.id,
+            severity: document.querySelector("input[name=severity]:checked").value,
+            description: document.getElementById("faultDescription").value.trim()
+        });
+
+        if (!result.success) {
+            showToast(result.message, "error");
+            return;
+        }
+
+        closeModal();
+        showToast("Fault reported.", "success");
+        setTimeout(() => window.location.reload(), 600);
+    });
+}
+
+</script>
+
+</body>
+</html>

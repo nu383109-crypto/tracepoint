@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Components</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar">
+  <div class="brand">
+    <a class="brand-icon" href="dashboard.html" title="Go to dashboard">▣</a>
+    <div><strong>TracePoint</strong><small>Asset Traceability</small></div>
+  </div>
+  <nav>
+    <a href="dashboard.html" data-page="dashboard">Dashboard</a>
+    <a href="kiosks.html" data-page="kiosks">Kiosks</a>
+    <a class="active" href="components.html" data-page="components">Components</a>
+    <a href="moveComponent.html" data-page="moveComponent">Log an Event</a>
+    <a href="faults.html" data-page="faults">Fault History</a>
+    <a href="alerts.html" data-page="alerts">Alerts</a>
+    <a href="reports.html" data-page="reports">Reports</a>
+    <div class="nav-divider"></div>
+    <a href="users.html" data-page="users">Users</a>
+    <a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a>
+    <a href="auditLog.html" data-page="auditLog">Audit Log</a>
+  </nav>
+</aside>
+
+<main class="main">
+
+<header class="topbar">
+  <h2>Components</h2>
+  <div class="user-area">
+    <div class="user-info">
+      <strong id="currentUserName">User</strong>
+      <small id="currentUserRole">Role</small>
+    </div>
+    <button class="logout" onclick="logoutUser()">Sign out</button>
+  </div>
+</header>
+
+<section class="content">
+
+  <div class="page-title">
+    <div>
+      <h1>Components</h1>
+      <p>Search and manage registered components.</p>
+    </div>
+    <button class="btn primary" onclick="openRegisterComponentModal()">+ Register component</button>
+  </div>
+
+  <div class="search">
+    <input type="text" id="componentSearch" placeholder="Search component ID, serial or type...">
+    <button class="btn" id="componentSearchBtn">Search</button>
+  </div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Component</th><th>Type</th><th>Serial</th><th>Location</th><th>Status</th><th>Warranty</th></tr>
+        </thead>
+        <tbody id="componentsBody">
+          <!-- rows are rendered by loadComponents() -->
+        </tbody>
+      </table>
+      <p id="componentsLoading" class="muted" style="padding:16px 20px;">Loading components...</p>
+      <p id="noComponentResults" class="muted" style="padding:16px 20px;" hidden>No components match that search.</p>
+    </div>
+    <div class="pagination" id="componentsPagination" hidden>
+      <button class="btn small" id="componentsPrevBtn">&larr; Prev</button>
+      <span id="componentsPageInfo" class="muted"></span>
+      <button class="btn small" id="componentsNextBtn">Next &rarr;</button>
+    </div>
+  </div>
+
+</section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("components");
+
+/* =========================================================
+   STATE
+   currentPage/currentSearch persist across loadComponents()
+   calls so Prev/Next and the search box both work off the
+   same source of truth instead of guessing each other's state.
+========================================================= */
+
+const PAGE_SIZE = 20;
+let currentPage = 1;
+let currentSearch = "";
+
+/* =========================================================
+   LOAD + RENDER — replaces the old DOM-filtering approach.
+   Every call re-fetches from the backend with the current
+   search term and page number, then redraws the table from
+   the response. This is what fixes the old bug where newly
+   registered or moved components never appeared here.
+========================================================= */
+
+async function loadComponents() {
+
+    const tbody = document.getElementById("componentsBody");
+    const loadingEl = document.getElementById("componentsLoading");
+    const noResultsEl = document.getElementById("noComponentResults");
+    const paginationEl = document.getElementById("componentsPagination");
+
+    loadingEl.hidden = false;
+    noResultsEl.hidden = true;
+    tbody.innerHTML = "";
+
+    try {
+
+        const params = new URLSearchParams({ page: currentPage, limit: PAGE_SIZE });
+        if (currentSearch) params.set("search", currentSearch);
+
+        const result = await apiFetch(`/components?${params}`);
+
+        loadingEl.hidden = true;
+
+        if (result.data.length === 0) {
+            noResultsEl.hidden = false;
+            paginationEl.hidden = true;
+            return;
+        }
+
+        result.data.forEach(renderComponentRow);
+
+        paginationEl.hidden = false;
+        document.getElementById("componentsPageInfo").textContent =
+            `Page ${result.page} of ${result.totalPages} (${result.total} total)`;
+        document.getElementById("componentsPrevBtn").disabled = result.page <= 1;
+        document.getElementById("componentsNextBtn").disabled = result.page >= result.totalPages;
+
+    } catch (err) {
+        loadingEl.hidden = true;
+        showToast(err.message, "error");
+    }
+}
+
+function renderComponentRow(component) {
+
+    const tbody = document.getElementById("componentsBody");
+    const row = document.createElement("tr");
+
+    const location = component.kiosk_code
+        ? `${component.kiosk_code} — ${component.location}`
+        : "In storage";
+
+    const warrantyLabel = component.warranty_expires_on
+        ? new Date(component.warranty_expires_on).toLocaleDateString()
+        : "not set";
+
+    const statusClass = component.status === "Installed" ? "status-active" : "status";
+
+    // textContent, not innerHTML, for anything that came from user
+    // input (serial/type/manufacturer) — avoids the old XSS gap.
+    const cells = [component.id, component.type, component.serial, location];
+
+    row.innerHTML = `
+        <td><strong></strong></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td><span class="${statusClass}"></span></td>
+        <td></td>
+    `;
+
+    row.children[0].querySelector("strong").textContent = `CMP-${component.id}`;
+    row.children[1].textContent = component.type;
+    row.children[2].textContent = component.serial;
+    row.children[3].textContent = location;
+    row.children[4].querySelector("span").textContent = component.status;
+    row.children[5].textContent = warrantyLabel;
+
+    tbody.appendChild(row);
+}
+
+/* =========================================================
+   SEARCH — debounced, and a Search button does the same
+   lookup for anyone who prefers to click. Instead of hiding
+   rows already in the DOM, this now re-queries the backend,
+   so search works across every component, not just whatever
+   happens to be on the current page.
+========================================================= */
+
+let searchDebounceTimer = null;
+
+function onComponentSearchInput() {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+        currentSearch = document.getElementById("componentSearch").value.trim();
+        currentPage = 1;
+        loadComponents();
+    }, 300);
+}
+
+document.getElementById("componentSearch").addEventListener("input", onComponentSearchInput);
+document.getElementById("componentSearchBtn").addEventListener("click", () => {
+    clearTimeout(searchDebounceTimer);
+    currentSearch = document.getElementById("componentSearch").value.trim();
+    currentPage = 1;
+    loadComponents();
+});
+
+/* =========================================================
+   PAGINATION CONTROLS
+========================================================= */
+
+document.getElementById("componentsPrevBtn").addEventListener("click", () => {
+    if (currentPage > 1) {
+        currentPage--;
+        loadComponents();
+    }
+});
+
+document.getElementById("componentsNextBtn").addEventListener("click", () => {
+    currentPage++;
+    loadComponents();
+});
+
+loadComponents();
+
+/* =========================================================
+   REGISTER COMPONENT — modal form, then a brief processing
+   state, then a success message, then the new row lands
+   in the table underneath.
+========================================================= */
+
+async function openRegisterComponentModal() {
+
+    let kioskOptions = "";
+    try {
+        // limit=100 here is a shortcut for a dropdown; a kiosk picker
+        // with its own search would be the real fix once the fleet
+        // grows past what fits in one page.
+        const result = await apiFetch("/kiosks?limit=100");
+        kioskOptions = result.data.map(
+            k => `<option value="${k.id}">${k.kiosk_code} — ${k.location}</option>`
+        ).join("");
+    } catch (err) {
+        showToast(err.message, "error");
+        return;
+    }
+
+    openModal(`
+        <h3>Register a component</h3>
+        <form id="registerComponentForm">
+            <div class="form-group">
+                <label for="newComponentType">Type</label>
+                <select id="newComponentType" required>
+                    <option value="">Select type</option>
+                    <option>Motor</option>
+                    <option>Control Board</option>
+                    <option>Wiring Harness</option>
+                    <option>Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="newComponentSerial">Serial number</label>
+                <input type="text" id="newComponentSerial" placeholder="e.g. MT-90412">
+            </div>
+            <div class="form-group">
+                <label for="newComponentLocation">Initial location</label>
+                <select id="newComponentLocation">
+                    <option value="storage">Storage — not installed</option>
+                    ${kioskOptions}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="newComponentWarranty">Warranty (days remaining)</label>
+                <input type="number" id="newComponentWarranty" placeholder="e.g. 180" min="0">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Register</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("registerComponentForm").addEventListener("submit", handleRegisterComponent);
+}
+
+async function handleRegisterComponent(event) {
+
+    event.preventDefault();
+
+    const serial = document.getElementById("newComponentSerial").value.trim();
+    const type = document.getElementById("newComponentType").value;
+    const kioskValue = document.getElementById("newComponentLocation").value;
+    const warrantyDays = document.getElementById("newComponentWarranty").value;
+
+    if (!serial || !type) {
+        showToast("Serial number and type are required.", "error");
+        return;
+    }
+
+    openModal(`
+        <div style="text-align:center;">
+            <div class="spinner"></div>
+            <p>Registering ${serial}...</p>
+        </div>
+    `);
+
+    // FR-1.3 (no duplicate serials) is enforced by the backend's
+    // UNIQUE constraint — a 409 comes back here if it's a repeat,
+    // rather than us checking a local copy of the data first.
+    try {
+
+        const warranty_expires_on = warrantyDays
+            ? new Date(Date.now() + warrantyDays * 86400000).toISOString().slice(0, 10)
+            : null;
+
+        const component = await apiFetch("/components", {
+            method: "POST",
+            body: JSON.stringify({
+                serial,
+                type,
+                kiosk_id: kioskValue === "storage" ? null : Number(kioskValue),
+                warranty_start: warrantyDays ? new Date().toISOString().slice(0, 10) : null,
+                warranty_expires_on
+            })
+        });
+
+        openModal(`
+            <div style="text-align:center;">
+                <div class="success-check">&#10003;</div>
+                <h3>Component registered</h3>
+                <p>${component.serial} has been added to the registry.</p>
+                <button class="btn primary" onclick="closeModal()">Done</button>
+            </div>
+        `);
+
+        showToast(`${component.serial} registered successfully.`, "success");
+        currentPage = 1;
+        loadComponents();
+
+    } catch (err) {
+        closeModal();
+        showToast(err.message, "error");
+    }
+}
+
+</script>
+
+</body>
+</html>

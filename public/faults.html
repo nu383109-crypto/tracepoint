@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Fault History</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a href="kiosks.html" data-page="kiosks">Kiosks</a><a href="components.html" data-page="components">Components</a><a href="moveComponent.html" data-page="moveComponent">Log an Event</a><a class="active" href="faults.html" data-page="faults">Fault History</a><a href="alerts.html" data-page="alerts">Alerts</a><a href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+    <header class="topbar"><h2>Fault History</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content">
+
+    <div class="page-title">
+      <div>
+        <h1>Fault history</h1>
+        <p>Faults recorded against components and kiosks, and what was done about them.</p>
+      </div>
+      <div class="title-actions">
+        <button class="btn primary" onclick="openLogFault()">Log fault</button>
+      </div>
+    </div>
+
+    <div class="stats-grid" id="faultStats"></div>
+
+    <div class="toolbar">
+      <input type="text" id="faultSearch" class="search-input" placeholder="Search by ID, description or reporter...">
+      <div class="chips" id="faultFilters">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="open">Open</button>
+        <button class="chip" data-filter="resolved">Resolved</button>
+        <button class="chip" data-filter="high">High severity</button>
+      </div>
+      <span class="result-count" id="faultCount"></span>
+    </div>
+
+    <div class="card flush">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Target</th><th>Type</th><th>Severity</th><th>Description</th><th>Reported by</th><th>Date</th><th>Status</th><th>Action</th></tr>
+          </thead>
+          <tbody id="faultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("faults", "Fault history");
+
+let activeFilter = getQueryParam("filter") || "all";
+let faultRecords = [];
+
+function normalizeFault(fault) {
+    const isKiosk = fault.kiosk_id !== null && fault.kiosk_id !== undefined;
+    const targetType = isKiosk ? "Kiosk" : "Component";
+    const targetId = targetType === "Kiosk"
+        ? fault.kiosk_code || fault.kiosk_id
+        : fault.component_serial || fault.component_id;
+
+    return {
+        ...fault,
+        targetId,
+        targetType,
+        targetRecordId: isKiosk ? fault.kiosk_id : fault.component_id,
+        reportedBy: fault.reported_by_name,
+        timestamp: fault.created_at,
+        resolvedAt: fault.resolved_at,
+        resolvedBy: fault.resolved_by
+    };
+}
+
+async function loadFaults() {
+    try {
+        const result = await apiFetch("/faults");
+        faultRecords = result.map(normalizeFault);
+        renderStats();
+        renderFaults();
+    } catch (error) {
+        faultRecords = [];
+        renderStats();
+        renderFaults();
+        showToast(error.message, "error");
+    }
+}
+
+
+/* =========================================================
+   SUMMARY
+========================================================= */
+
+function renderStats() {
+
+    const faults = faultRecords;
+    const open = faults.filter(fault => fault.status === "Open");
+    const high = open.filter(fault => fault.severity === "High");
+
+    /* How long resolved faults took, as a plain average in days. */
+    const resolved = faults.filter(fault => fault.status === "Resolved" && fault.resolvedAt);
+    const averageDays = resolved.length
+        ? Math.round(resolved.reduce((total, fault) =>
+            total + (new Date(fault.resolvedAt) - new Date(fault.timestamp)) / 86400000, 0) / resolved.length)
+        : null;
+
+    document.getElementById("faultStats").innerHTML = `
+        <div class="card stat-card ${open.length ? "attention" : ""}"><span>Open faults</span><strong>${open.length}</strong><em>${faults.length} recorded all time</em></div>
+        <div class="card stat-card ${high.length ? "attention" : ""}"><span>High severity open</span><strong>${high.length}</strong><em>needs a technician first</em></div>
+        <div class="card stat-card"><span>Resolved</span><strong>${resolved.length}</strong><em>closed out</em></div>
+        <div class="card stat-card"><span>Average time to fix</span><strong>${averageDays === null ? "—" : averageDays + "d"}</strong><em>across resolved faults</em></div>`;
+}
+
+
+/* =========================================================
+   LIST
+========================================================= */
+
+function matchesFilter(fault) {
+    if (activeFilter === "open") return fault.status === "Open";
+    if (activeFilter === "resolved") return fault.status === "Resolved";
+    if (activeFilter === "high") return fault.severity === "High";
+    return true;
+}
+
+function visibleFaults() {
+
+    const query = document.getElementById("faultSearch").value.trim().toLowerCase();
+
+    return faultRecords.filter(fault => {
+        const haystack = `${fault.targetId} ${fault.description} ${fault.reportedBy} ${fault.severity} ${fault.status}`.toLowerCase();
+        return haystack.includes(query) && matchesFilter(fault);
+    });
+}
+
+function renderFaults() {
+
+    const faults = visibleFaults();
+    const body = document.getElementById("faultsBody");
+
+    document.getElementById("faultCount").textContent = `${faults.length} of ${faultRecords.length} faults`;
+
+    if (!faults.length) {
+        body.innerHTML = emptyRow(8, "No faults match this view.",
+            `<button class="btn small" onclick="clearFilters()">Clear filters</button>`);
+        return;
+    }
+
+    body.innerHTML = faults.map(fault => {
+
+        const href = fault.targetType === "Kiosk"
+            ? `kioskDetail.html?id=${encodeURIComponent(fault.targetRecordId)}`
+            : `componentDetail.html?id=${encodeURIComponent(fault.targetRecordId)}`;
+
+        const action = fault.status === "Open"
+            ? (canResolveFaults()
+                ? `<button class="btn small" onclick="openResolve('${fault.id}')">Resolve</button>`
+                : `<span class="muted">Supervisor only</span>`)
+            : `<button class="btn small ghost" onclick="viewResolution('${fault.id}')">Details</button>`;
+
+        return `<tr>
+            <td><a class="id-link" href="${href}">${escapeHtml(fault.targetId)}</a></td>
+            <td>${escapeHtml(fault.targetType)}</td>
+            <td>${severityPill(fault.severity)}</td>
+            <td>${escapeHtml(fault.description)}</td>
+            <td>${escapeHtml(fault.reportedBy)}</td>
+            <td>${escapeHtml(formatDate(fault.timestamp))}</td>
+            <td>${statusPill(fault.status)}</td>
+            <td>${action}</td>
+        </tr>`;
+    }).join("");
+}
+
+function clearFilters() {
+    activeFilter = "all";
+    document.getElementById("faultSearch").value = "";
+    syncChips();
+    renderFaults();
+}
+
+function syncChips() {
+    document.querySelectorAll("#faultFilters .chip").forEach(chip => {
+        chip.classList.toggle("active", chip.dataset.filter === activeFilter);
+    });
+}
+
+document.getElementById("faultSearch").addEventListener("input", renderFaults);
+
+document.querySelectorAll("#faultFilters .chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+        activeFilter = chip.dataset.filter;
+        syncChips();
+        renderFaults();
+    });
+});
+
+
+/* =========================================================
+   LOG A FAULT
+========================================================= */
+
+async function openLogFault() {
+
+    try {
+        const [kioskResult, componentResult] = await Promise.all([
+            getKiosks({ limit: 100 }),
+            getComponents({ limit: 100 })
+        ]);
+
+        const targets = [
+            ...kioskResult.data.map(kiosk => ({
+                id: kiosk.id,
+                label: `${kiosk.kiosk_code} — ${kiosk.location}`,
+                type: "Kiosk"
+            })),
+            ...componentResult.data.map(item => ({
+                id: item.id,
+                label: `${item.serial} — ${item.type}`,
+                type: "Component"
+            }))
+        ];
+
+        openModal(`
+        <h3>Log a fault</h3>
+        <form id="logFaultForm">
+            <div class="form-group">
+                <label for="faultTarget">What has the fault?</label>
+                <select id="faultTarget" required>
+                    <option value="">Select a kiosk or component</option>
+                    <optgroup label="Kiosks">
+                        ${targets.filter(item => item.type === "Kiosk").map(item => `<option value="${escapeHtml(item.id)}" data-type="Kiosk">${escapeHtml(item.label)}</option>`).join("")}
+                    </optgroup>
+                    <optgroup label="Components">
+                        ${targets.filter(item => item.type === "Component").map(item => `<option value="${escapeHtml(item.id)}" data-type="Component">${escapeHtml(item.label)}</option>`).join("")}
+                    </optgroup>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Severity</label>
+                <div class="radio-set">
+                    <label class="radio-option"><input type="radio" name="severity" value="Low"><span>Low<small>Cosmetic or minor</small></span></label>
+                    <label class="radio-option"><input type="radio" name="severity" value="Medium" checked><span>Medium<small>Degraded service</small></span></label>
+                    <label class="radio-option"><input type="radio" name="severity" value="High"><span>High<small>Out of service</small></span></label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="faultDescription">What's wrong?</label>
+                <textarea id="faultDescription" placeholder="Describe the fault as you found it" required></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Log fault</button>
+            </div>
+        </form>
+        `);
+
+        document.getElementById("logFaultForm").addEventListener("submit", async event => {
+
+        event.preventDefault();
+
+        const select = document.getElementById("faultTarget");
+        const chosen = select.options[select.selectedIndex];
+
+        const result = await logFault({
+            kioskId: chosen.dataset.type === "Kiosk" ? select.value : null,
+            componentId: chosen.dataset.type === "Component" ? select.value : null,
+            severity: document.querySelector("input[name=severity]:checked").value,
+            description: document.getElementById("faultDescription").value.trim()
+        });
+
+        if (!result.success) {
+            showToast(result.message, "error");
+            return;
+        }
+
+        closeModal();
+        showToast(`Fault logged on ${chosen.textContent}.`, "success");
+        await loadFaults();
+        });
+    } catch (error) {
+        showToast(error.message, "error");
+    }
+}
+
+
+/* =========================================================
+   RESOLVE
+========================================================= */
+
+function openResolve(faultId) {
+
+    const fault = faultRecords.find(item => String(item.id) === String(faultId));
+    if (!fault) return;
+
+    openModal(`
+        <h3>Resolve fault on ${escapeHtml(fault.targetId)}</h3>
+        <p class="modal-body-text">${escapeHtml(fault.description)}</p>
+        <form id="resolveForm">
+            <div class="form-group">
+                <label for="resolutionText">What fixed it?</label>
+                <textarea id="resolutionText" placeholder="e.g. Replaced the motor with CMP-0312" required></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Mark resolved</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("resolveForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const result = await resolveFault(
+        faultId,
+        document.getElementById("resolutionText").value.trim()
+    );
+
+    if (!result.success) {
+        showToast(result.message, "error");
+        return;
+    }
+
+    closeModal();
+    showToast("Fault resolved.", "success");
+    await loadFaults();
+});
+}
+
+function viewResolution(faultId) {
+
+    const fault = faultRecords.find(item => String(item.id) === String(faultId));
+    if (!fault) return;
+
+    openModal(`
+        <h3>${escapeHtml(fault.targetId)} — ${escapeHtml(fault.severity.toLowerCase())} severity</h3>
+        <p class="modal-body-text"><strong>Reported</strong><br>${escapeHtml(fault.description)}<br>
+        <span class="muted">${escapeHtml(formatDateTime(fault.timestamp))} by ${escapeHtml(fault.reportedBy)}</span></p>
+        <p class="modal-body-text"><strong>Resolution</strong><br>${escapeHtml(fault.resolution || "No note recorded.")}<br>
+        <span class="muted">${escapeHtml(formatDateTime(fault.resolvedAt))}</span></p>
+        <div class="form-actions"><button class="btn primary" onclick="closeModal()">Close</button></div>
+    `);
+}
+
+
+/* =========================================================
+   EXPORT
+========================================================= */
+
+function exportFaults() {
+
+    const rows = visibleFaults().map(fault => [
+        fault.id, fault.targetId, fault.targetType, fault.severity,
+        fault.description, fault.status, fault.reportedBy,
+        formatDateTime(fault.timestamp), fault.resolvedAt ? formatDateTime(fault.resolvedAt) : "", fault.resolution
+    ]);
+
+    downloadCsv("tracepoint-faults.csv",
+        ["Fault ID", "Target", "Target type", "Severity", "Description", "Status", "Reported by", "Reported at", "Resolved at", "Resolution"],
+        rows);
+}
+
+syncChips();
+loadFaults();
+
+</script>
+
+</body>
+</html>

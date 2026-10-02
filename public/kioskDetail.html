@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Kiosk</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a class="active" href="kiosks.html" data-page="kiosks">Kiosks</a><a href="components.html" data-page="components">Components</a><a href="moveComponent.html" data-page="moveComponent">Log an Event</a><a href="faults.html" data-page="faults">Fault History</a><a href="alerts.html" data-page="alerts">Alerts</a><a href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+    <header class="topbar"><h2>Kiosk</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content" id="detailContent"></section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("kioskDetail", "Kiosk");
+
+const kioskId = getQueryParam("id");
+let kiosk = null;
+let fitted = [];
+let history = [];
+let faults = [];
+
+loadKioskDetail();
+
+async function loadKioskDetail() {
+
+    if (!kioskId) {
+        renderNotFound();
+        return;
+    }
+
+    try {
+        const result = await getKiosk(kioskId);
+        kiosk = result.kiosk;
+        fitted = result.components;
+        history = result.history;
+
+        faults = await faultsFor({ kioskId: kiosk.id });
+
+        renderKiosk();
+
+    } catch (err) {
+        renderNotFound();
+    }
+}
+
+function renderNotFound() {
+
+    document.getElementById("detailContent").innerHTML = `
+        <div class="page-title"><div><h1>Kiosk not found</h1>
+        <p>No kiosk is registered with the ID ${escapeHtml(kioskId || "(none given)")}.</p></div></div>
+        <a class="btn primary" href="kiosks.html">Back to kiosks</a>`;
+}
+
+function renderKiosk() {
+
+    const openFaults = faults.filter(fault => fault.status === "Open");
+
+    document.getElementById("detailContent").innerHTML = `
+
+      <div class="breadcrumb"><a href="kiosks.html">Kiosks</a> / ${escapeHtml(kiosk.kiosk_code)}</div>
+
+      <div class="page-title">
+        <div>
+          <h1>${escapeHtml(kiosk.kiosk_code)} &middot; ${escapeHtml(kiosk.location)}</h1>
+        </div>
+        <div class="title-actions">
+          ${canManageAssets() ? `<button class="btn" onclick="openEditKiosk()">Edit kiosk</button>` : ""}
+          ${canAccess("faults") ? `<button class="btn" onclick="openKioskFault()">Report fault</button>` : ""}
+          ${canAccess("moveComponent") ? `<a class="btn primary" href="moveComponent.html?kiosk=${encodeURIComponent(kiosk.id)}">Log an event</a>` : ""}
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="card stat-card"><span>Components fitted</span><strong>${fitted.length}</strong><em>at this kiosk right now</em></div>
+        <div class="card stat-card ${openFaults.length ? "attention" : ""}"><span>Open faults</span><strong>${openFaults.length}</strong><em>${faults.length} recorded all time</em></div>
+        <div class="card stat-card"><span>Movements</span><strong>${history.length}</strong><em>in and out of this kiosk</em></div>
+        <div class="card stat-card"><span>Status</span><strong style="font-size:18px; margin-top:12px;">${escapeHtml(kiosk.status)}</strong><em>since ${escapeHtml(formatDate(kiosk.installed_at))}</em></div>
+      </div>
+
+      <div class="detail-grid">
+
+        <div>
+
+          <div class="card flush">
+            <div class="card-head"><h3>Components installed here</h3>
+              <span class="muted">${fitted.length} fitted</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Component</th><th>Type</th><th>Serial</th><th>Warranty</th><th>Status</th></tr></thead>
+                <tbody>${renderFittedRows(fitted)}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Movement history</h3>
+            ${renderHistory(history)}
+          </div>
+
+        </div>
+
+        <div>
+
+          <div class="card">
+            <h3>Kiosk details</h3>
+            <dl class="spec-list">
+              <div><dt>Kiosk code</dt><dd>${escapeHtml(kiosk.kiosk_code)}</dd></div>
+              <div><dt>Status</dt><dd>${statusPill(kiosk.status)}</dd></div>
+              <div><dt>Location</dt><dd>${escapeHtml(kiosk.location)}</dd></div>
+              <div><dt>Installed</dt><dd>${escapeHtml(formatDate(kiosk.installed_at))}</dd></div>
+              <div><dt>Components</dt><dd>${fitted.length}</dd></div>
+            </dl>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Faults on this kiosk</h3></div>
+            ${renderFaults(faults)}
+          </div>
+
+        </div>
+
+      </div>`;
+}
+
+function renderFittedRows(fitted) {
+
+    if (!fitted.length) {
+        return emptyRow(5, "Nothing is installed at this kiosk yet.",
+            canAccess("moveComponent") ? `<a class="btn primary small" href="moveComponent.html?kiosk=${encodeURIComponent(kiosk.id)}">Install a component</a>` : "");
+    }
+
+    return fitted.map(item => `
+        <tr>
+            <td><a class="id-link" href="componentDetail.html?id=${encodeURIComponent(item.id)}">CMP-${String(item.id).padStart(4, "0")}</a></td>
+            <td>${escapeHtml(item.type)}</td>
+            <td>${escapeHtml(item.serial)}</td>
+            <td>${warrantyLabel(item)}</td>
+            <td>${statusPill(item.status)}</td>
+        </tr>`).join("");
+}
+
+function renderHistory(history) {
+
+    if (!history.length) {
+        return `<div class="empty-state"><p>No components have moved in or out of this kiosk yet.</p></div>`;
+    }
+
+    return `<ul class="timeline">` + history.slice(0, 15).map(item => {
+
+        const direction = item.to_kiosk_id === kiosk.id ? "arrived here" : "left here";
+
+        return `<li>
+            <strong>${escapeHtml(item.component_serial)} ${direction}</strong>
+            <div class="timeline-meta">${escapeHtml(item.event_type)} &middot; ${escapeHtml(formatDateTime(item.created_at))} &middot; ${escapeHtml(item.performed_by_name)}</div>
+            ${item.reason ? `<p>${escapeHtml(item.reason)}</p>` : ""}
+        </li>`;
+    }).join("") + `</ul>`;
+}
+
+function renderFaults(faults) {
+
+    if (!faults.length) {
+        return `<div class="empty-state"><p>No faults recorded against this kiosk.</p></div>`;
+    }
+
+    return `<ul class="mini-list">` + faults.slice(0, 8).map(fault => `
+        <li>
+            <span>${severityPill(fault.severity)} ${escapeHtml(fault.description)}
+                <span class="cell-sub">${escapeHtml(formatDate(fault.created_at))} &middot; ${escapeHtml(fault.reported_by_name)}</span>
+            </span>
+            ${statusPill(fault.status)}
+        </li>`).join("") + `</ul>`;
+}
+
+
+/* =========================================================
+   EDIT
+========================================================= */
+
+function openEditKiosk() {
+
+    openModal(`
+        <h3>Edit ${escapeHtml(kiosk.kiosk_code)}</h3>
+        <form id="editKioskForm">
+            <div class="form-group">
+                <label for="editLocation">Location</label>
+                <input type="text" id="editLocation" value="${escapeHtml(kiosk.location)}" required>
+            </div>
+            <div class="form-group">
+                <label for="editStatus">Status</label>
+                <select id="editStatus">
+                    <option ${kiosk.status === "Active" ? "selected" : ""}>Active</option>
+                    <option ${kiosk.status === "In Maintenance" ? "selected" : ""}>In Maintenance</option>
+                    <option ${kiosk.status === "Decommissioned" ? "selected" : ""}>Decommissioned</option>
+                </select>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Save changes</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("editKioskForm").addEventListener("submit", async event => {
+
+        event.preventDefault();
+
+        try {
+            await apiFetch(`/kiosks/${kiosk.id}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    location: document.getElementById("editLocation").value,
+                    status: document.getElementById("editStatus").value
+                })
+            });
+
+            closeModal();
+            showToast("Kiosk updated.", "success");
+            setTimeout(() => window.location.reload(), 600);
+
+        } catch (err) {
+            showToast(err.message, "error");
+        }
+    });
+}
+
+
+/* =========================================================
+   REPORT A FAULT ON THIS KIOSK
+========================================================= */
+
+function openKioskFault() {
+
+    openModal(`
+        <h3>Report a fault on ${escapeHtml(kiosk.kiosk_code)}</h3>
+        <form id="kioskFaultForm">
+            <div class="form-group">
+                <label>Severity</label>
+                <div class="radio-set">
+                    <label class="radio-option"><input type="radio" name="severity" value="Low"><span>Low<small>Cosmetic or minor</small></span></label>
+                    <label class="radio-option"><input type="radio" name="severity" value="Medium" checked><span>Medium<small>Degraded service</small></span></label>
+                    <label class="radio-option"><input type="radio" name="severity" value="High"><span>High<small>Out of service</small></span></label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="faultDescription">What's wrong?</label>
+                <textarea id="faultDescription" placeholder="Describe the fault as you found it" required></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn primary">Report fault</button>
+            </div>
+        </form>
+    `);
+
+    document.getElementById("kioskFaultForm").addEventListener("submit", async event => {
+
+        event.preventDefault();
+
+        const result = await logFault({
+            kioskId: kiosk.id,
+            severity: document.querySelector("input[name=severity]:checked").value,
+            description: document.getElementById("faultDescription").value.trim()
+        });
+
+        if (!result.success) {
+            showToast(result.message, "error");
+            return;
+        }
+
+        closeModal();
+        showToast("Fault reported.", "success");
+        setTimeout(() => window.location.reload(), 600);
+    });
+}
+
+</script>
+
+</body>
+</html>

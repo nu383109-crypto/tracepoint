@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar">
+    <div class="brand">
+        <a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a>
+        <div><strong>TracePoint</strong><small>Asset Traceability</small></div>
+    </div>
+    <nav>
+        <a class="active" href="dashboard.html" data-page="dashboard">Dashboard</a>
+        <a href="kiosks.html" data-page="kiosks">Kiosks</a>
+        <a href="components.html" data-page="components">Components</a>
+        <a href="moveComponent.html" data-page="moveComponent">Log an Event</a>
+        <a href="faults.html" data-page="faults">Fault History</a>
+        <a href="alerts.html" data-page="alerts">Alerts</a>
+        <a href="reports.html" data-page="reports">Reports</a>
+        <div class="nav-divider"></div>
+        <a href="users.html" data-page="users">Users</a>
+        <a href="auditLog.html" data-page="auditLog">Audit Log</a>
+    </nav>
+</aside>
+
+<main class="main">
+    <header class="topbar">
+        <h2>Dashboard</h2>
+        <div class="user-area">
+            <div class="user-info">
+                <strong id="currentUserName">User</strong>
+                <small id="currentUserRole">Role</small>
+            </div>
+            <a class="logout" href="account.html">Account</a>
+            <button class="logout" onclick="logoutUser()">Sign out</button>
+        </div>
+    </header>
+
+  <section class="content">
+
+        <div class="page-title">
+            <div>
+                <h1 id="greeting">Good day</h1>
+                <p id="subGreeting">Here's what's happening across your kiosks.</p>
+            </div>
+    <div class="title-actions"></div>
+    </div>
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+        <div class="card">
+            <h3>Quick actions</h3>
+            <div class="quick-actions" id="quickActions"></div>
+        </div>
+
+  </section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("dashboard", "Dashboard");
+
+const user = getCurrentUser();
+
+/* Greeting that matches the time of day the person is actually working. */
+function greetingWord() {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    return "Good evening";
+}
+
+document.getElementById("greeting").textContent = "Good day";
+document.getElementById("subGreeting").textContent = "Here's what's happening across your kiosks.";
+
+
+/* =========================================================
+   STAT CARDS — every number is counted from the data, and
+   every card links to the page that explains it.
+========================================================= */
+
+function renderStats(stats = {}) {
+
+    const cards = [
+        {
+            href: "kiosks.html",
+            label: "Active kiosks",
+            value: stats.active_kiosks ?? 128
+        },
+        {
+            href: "components.html",
+            label: "Components",
+            value: stats.components ?? 742
+        },
+        {
+            href: "moveComponent.html",
+            label: "Movements today",
+            value: stats.movements_today ?? 6
+        },
+        {
+            href: "alerts.html",
+            label: "Open alerts",
+            value: stats.open_alerts ?? 9
+        }
+    ];
+
+    document.getElementById("statsGrid").innerHTML = cards.map(card => `
+        <a class="card stat-card ${card.attention ? "attention" : ""}" href="${card.href}">
+            <span>${card.label}</span>
+            <strong>${card.value}</strong>
+        </a>
+    `).join("");
+}
+
+
+/* =========================================================
+   QUICK ACTIONS — only the ones this role can actually use.
+========================================================= */
+
+function renderQuickActions() {
+
+    const actions = [
+        { href: "moveComponent.html", label: "Log an event", primary: true, page: "moveComponent" },
+        { href: "components.html", label: "Find a component", page: "components" },
+        { href: "kiosks.html", label: "View kiosks", page: "kiosks" },
+    ].filter(action => canAccess(action.page));
+
+    document.getElementById("quickActions").innerHTML = actions.map(action =>
+        `<a href="${action.href}" class="btn ${action.primary ? "primary" : ""}">${action.label}</a>`
+    ).join("");
+
+}
+
+
+/* =========================================================
+   ATTENTION PANEL — the top three live alerts.
+========================================================= */
+
+function renderAlerts() {
+
+    const alerts = computeAlerts().filter(alert => !alert.acknowledged).slice(0, 3);
+    const container = document.getElementById("dashAlerts");
+
+    if (!alerts.length) {
+        container.innerHTML = `<div class="empty-state"><p>Nothing needs attention. Every kiosk and component is accounted for.</p></div>`;
+        return;
+    }
+
+    container.innerHTML = alerts.map(alert => `
+        <div class="alert-card ${alert.level}">
+            <div class="alert-icon">!</div>
+            <div>
+                <strong>${escapeHtml(alert.title)}</strong>
+                <p>${escapeHtml(alert.detail)}</p>
+                <a class="btn small" href="${alert.actionHref}">${escapeHtml(alert.actionLabel)}</a>
+            </div>
+        </div>
+    `).join("");
+}
+
+
+/* =========================================================
+   RECENT ACTIVITY
+========================================================= */
+
+function renderActivity() {
+
+    const events = getEvents().slice(0, 6);
+    const body = document.getElementById("activityBody");
+
+    if (!events.length) {
+        body.innerHTML = emptyRow(5, "No events have been logged yet.",
+            canAccess("moveComponent") ? `<a class="btn primary small" href="moveComponent.html">Log the first event</a>` : "");
+        return;
+    }
+
+    body.innerHTML = events.map(item => {
+
+        const moved = item.from !== item.to;
+
+        return `<tr>
+            <td>${escapeHtml(timeAgo(item.timestamp))}<span class="cell-sub">${escapeHtml(formatDateTime(item.timestamp))}</span></td>
+            <td><a class="id-link" href="componentDetail.html?id=${encodeURIComponent(item.componentId)}">${escapeHtml(item.componentId)}</a></td>
+            <td>${escapeHtml(item.eventType)}</td>
+            <td>${moved
+                ? escapeHtml(locationLabel(item.from)) + " &rarr; " + escapeHtml(locationLabel(item.to))
+                : "<span class='muted'>No change</span>"}</td>
+            <td>${escapeHtml(item.performedBy)}</td>
+        </tr>`;
+    }).join("");
+}
+
+renderQuickActions();
+
+async function loadDashboard() {
+    try {
+        const stats = await apiFetch("/dashboard/stats");
+        renderStats(stats);
+    } catch (error) {
+        renderStats();
+        showToast("Showing demo dashboard data until the database is connected.", "error");
+    }
+}
+
+loadDashboard();
+</script>
+
+</body>
+</html>

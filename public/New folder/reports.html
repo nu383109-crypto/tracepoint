@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TracePoint | Reports</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<div class="app">
+
+<aside class="sidebar"><div class="brand"><a class="brand-icon" href="dashboard.html" title="Go to dashboard">&#9635;</a><div><strong>TracePoint</strong><small>Asset Traceability</small></div></div><nav>
+<a href="dashboard.html" data-page="dashboard">Dashboard</a><a href="kiosks.html" data-page="kiosks">Kiosks</a><a href="components.html" data-page="components">Components</a><a href="moveComponent.html" data-page="moveComponent">Log an Event</a><a href="faults.html" data-page="faults">Fault History</a><a href="alerts.html" data-page="alerts">Alerts</a><a class="active" href="reports.html" data-page="reports">Reports</a><div class="nav-divider"></div><a href="users.html" data-page="users">Users</a><a href="alterPrivileges.html" data-page="alterPrivileges">Alter Privileges</a><a href="auditLog.html" data-page="auditLog">Audit Log</a>
+</nav></aside>
+
+<main class="main">
+    <header class="topbar"><h2>Reports</h2><div class="user-area"><div class="user-info"><strong id="currentUserName">User</strong><small id="currentUserRole">Role</small></div><button class="logout" onclick="logoutUser()">Sign out</button></div></header>
+
+  <section class="content">
+
+    <div class="page-title">
+      <div>
+        <h1>Reports</h1>
+        <p>Export what's in the register right now, as a CSV you can open in Excel or send on.</p>
+      </div>
+            <div class="title-actions">
+                <button class="btn primary" onclick="exportFaultReport()">Export faults CSV</button>
+            </div>
+    </div>
+
+    <div class="report-grid" id="reportGrid"></div>
+
+  </section>
+</main>
+</div>
+
+<script src="script.js"></script>
+<script>
+
+initializePage("reports", "Reports");
+
+
+/* =========================================================
+   REPORT DEFINITIONS
+   Each one builds its rows from the live register at the
+   moment the button is pressed.
+========================================================= */
+
+const REPORTS = {
+
+    movement: {
+        icon: "&harr;",
+        title: "Movement history",
+        description: "Every event logged against every component, in order.",
+        filename: "tracepoint-movement-history.csv",
+        headers: ["Date", "Component", "Event", "From", "To", "Reason", "Notes", "Logged by"],
+        build: () => getEvents().map(evt => [
+            formatDateTime(evt.timestamp), evt.componentId, evt.eventType,
+            locationLabel(evt.from), locationLabel(evt.to), evt.reason, evt.notes, evt.performedBy
+        ])
+    },
+
+    kioskConfig: {
+        icon: "&#9635;",
+        title: "Kiosk configuration",
+        description: "Each kiosk with the components currently fitted inside it.",
+        filename: "tracepoint-kiosk-configuration.csv",
+        headers: ["Kiosk", "Location", "Region", "Status", "Installed", "Components fitted", "Component IDs"],
+        build: () => getKiosks().map(kiosk => {
+            const fitted = componentsAtKiosk(kiosk.id);
+            return [
+                kiosk.id, kiosk.location, kiosk.region || "", kiosk.status,
+                formatDate(kiosk.installedAt), fitted.length, fitted.map(item => item.id).join(" ")
+            ];
+        })
+    },
+
+    warranty: {
+        icon: "!",
+        title: "Warranty & lifecycle",
+        description: "Warranty remaining on every component, soonest to expire first.",
+        filename: "tracepoint-warranty.csv",
+        headers: ["Component", "Type", "Serial", "Location", "Status", "Days remaining", "Warranty ends"],
+        build: () => getComponents()
+            .slice()
+            .sort((a, b) => (warrantyDaysLeft(a) ?? 99999) - (warrantyDaysLeft(b) ?? 99999))
+            .map(item => [
+                item.id, item.type, item.serial, locationLabel(item.location), item.status,
+                warrantyDaysLeft(item) === null ? "not set" : warrantyDaysLeft(item),
+                item.warrantyEnds ? formatDate(item.warrantyEnds) : ""
+            ])
+    },
+
+    missing: {
+        icon: "?",
+        title: "Missing components",
+        description: "Components without an accounted location, and where they were last seen.",
+        filename: "tracepoint-missing-components.csv",
+        headers: ["Component", "Type", "Serial", "Status", "Last known location", "Last event", "Last logged by"],
+        build: () => getComponents()
+            .filter(item => item.status === "Missing" || !item.location)
+            .map(item => {
+                const last = eventsForComponent(item.id)[0];
+                return [
+                    item.id, item.type, item.serial, item.status,
+                    last ? locationLabel(last.to) : "never recorded",
+                    last ? formatDateTime(last.timestamp) : "",
+                    last ? last.performedBy : ""
+                ];
+            })
+    },
+
+    faults: {
+        icon: "&#9888;",
+        title: "Fault report",
+        description: "Every fault raised, with severity, status and how it was resolved.",
+        filename: "tracepoint-faults.csv",
+        headers: ["Fault ID", "Target", "Type", "Severity", "Description", "Status", "Reported by", "Reported", "Resolved", "Resolution"],
+        build: () => getFaults().map(fault => [
+            fault.id, fault.targetId, fault.targetType, fault.severity, fault.description,
+            fault.status, fault.reportedBy, formatDateTime(fault.timestamp),
+            fault.resolvedAt ? formatDateTime(fault.resolvedAt) : "", fault.resolution
+        ])
+    },
+
+    inventory: {
+        icon: "&#8801;",
+        title: "Full inventory",
+        description: "One row per component: what it is, where it is, and its condition.",
+        filename: "tracepoint-inventory.csv",
+        headers: ["Component", "Type", "Serial", "Location", "Location name", "Status", "Warranty days", "Registered"],
+        build: () => getComponents().map(item => [
+            item.id, item.type, item.serial, item.location || "unknown", locationLabel(item.location),
+            item.status, warrantyDaysLeft(item) === null ? "not set" : warrantyDaysLeft(item),
+            formatDate(item.addedAt)
+        ])
+    }
+};
+
+function renderReports() {
+
+    document.getElementById("reportGrid").innerHTML = Object.keys(REPORTS).map(key => {
+
+        const report = REPORTS[key];
+        const count = report.build().length;
+
+        return `
+            <div class="card report-card">
+                <div class="report-icon">${report.icon}</div>
+                <h3>${report.title}</h3>
+                <p>${report.description}</p>
+                <div class="report-meta">${count} ${count === 1 ? "row" : "rows"} ready to export</div>
+                <div class="btn-row">
+                    <button class="btn primary" onclick="runExport('${key}')" ${count ? "" : "disabled"}>Export CSV</button>
+                    <button class="btn" onclick="previewReport('${key}')" ${count ? "" : "disabled"}>Preview</button>
+                </div>
+            </div>`;
+    }).join("");
+}
+
+function runExport(key) {
+    const report = REPORTS[key];
+    downloadCsv(report.filename, report.headers, report.build());
+}
+
+async function exportFaultReport() {
+    try {
+        const faults = await apiFetch("/faults");
+        const rows = faults.map(fault => [
+            fault.id,
+            fault.kiosk_code || fault.component_serial || "Unknown",
+            fault.kiosk_id ? "Kiosk" : "Component",
+            fault.severity,
+            fault.description,
+            fault.status,
+            fault.reported_by_name,
+            formatDateTime(fault.created_at),
+            fault.resolved_at ? formatDateTime(fault.resolved_at) : "",
+            fault.resolution || ""
+        ]);
+
+        downloadCsv("tracepoint-faults.csv", [
+            "Fault ID", "Target", "Target type", "Severity", "Description",
+            "Status", "Reported by", "Reported at", "Resolved at", "Resolution"
+        ], rows);
+    } catch (error) {
+        showToast(error.message || "Failed to export faults.", "error");
+    }
+}
+
+/* A quick look at the first few rows, so nobody exports a file
+   only to find it isn't the one they wanted. */
+function previewReport(key) {
+
+    const report = REPORTS[key];
+    const rows = report.build().slice(0, 5);
+
+    openModal(`
+        <h3>${report.title}</h3>
+        <p class="modal-body-text">First ${rows.length} of ${report.build().length} rows.</p>
+        <div class="table-wrap" style="border:1px solid var(--line); border-radius:8px;">
+            <table>
+                <thead><tr>${report.headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+                <tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody>
+            </table>
+        </div>
+        <div class="form-actions">
+            <button class="btn" onclick="closeModal()">Close</button>
+            <button class="btn primary" onclick="closeModal(); runExport('${key}')">Export CSV</button>
+        </div>
+    `, { wide: true });
+}
+
+renderReports();
+
+</script>
+
+</body>
+</html>
